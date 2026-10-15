@@ -1,0 +1,30 @@
+modLoader="javafml"
+loaderVersion="[1,)"
+license="MIT"
+issueTrackerURL="https://github.com/MihailDenisov/ServerModUpdater/issues"
+
+[[mods]]
+modId="modupdates"
+version="${mod_version}"
+displayName="ServerModUpdater"
+authors="${mod_author}"
+displayURL="https://github.com/MihailDenisov/ServerModUpdater"
+description='''
+Server-only manual update audit and verified JAR replacement for Modrinth and CurseForge.
+Updates require an operator command and take effect only after a full server restart.
+Optional AutoModpack integration is disabled by default.
+'''
+
+[[dependencies.modupdates]]
+modId="neoforge"
+type="required"
+versionRange="[21.1,)"
+ordering="NONE"
+side="SERVER"
+
+[[dependencies.modupdates]]
+modId="minecraft"
+type="required"
+versionRange="[1.21.1]"
+ordering="NONE"
+side="SERVER"

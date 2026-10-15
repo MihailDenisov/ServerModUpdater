@@ -1,0 +1,15 @@
+# ServerModUpdater 1.2.0 example. Copy to config/modupdates.properties.
+# Prefer MODUPDATES_CURSEFORGE_API_KEY instead of storing a key here.
+curseforgeApiKey=YOUR_CURSEFORGE_API_KEY
+includeBeta=false
+includeAlpha=false
+enableAutoModpack=false
+scanLegacyHostMidpack=true
+language=en_us
+# 0 keeps all timestamped report pairs; positive values retain the newest N pairs.
+reportRetentionCount=0
+maxRetries=2
+retryBaseDelayMillis=500
+retryMaxDelayMillis=10000
+requestTimeoutSeconds=25
+checkBudgetSeconds=180

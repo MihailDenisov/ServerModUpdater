@@ -1,0 +1,105 @@
+plugins {
+    id 'java-library'
+    id 'net.neoforged.moddev' version '2.0.148'
+}
+
+version = mod_version
+group = mod_group_id
+
+base { archivesName = 'ServerModUpdater' }
+java.toolchain.languageVersion = JavaLanguageVersion.of(21)
+
+repositories {
+    mavenCentral()
+}
+
+dependencies {
+    testImplementation platform('org.junit:junit-bom:5.11.4')
+    testImplementation 'org.junit.jupiter:junit-jupiter'
+    testImplementation 'com.google.code.gson:gson:2.11.0'
+    testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+    testRuntimeOnly 'org.slf4j:slf4j-simple:2.0.16'
+}
+
+neoForge {
+    version = project.neo_version
+    runs {
+        server {
+            server()
+            programArgument '--nogui'
+        }
+    }
+    mods {
+        modupdates {
+            sourceSet sourceSets.main
+        }
+    }
+}
+
+tasks.withType(JavaCompile).configureEach {
+    options.encoding = 'UTF-8'
+    options.release = 21
+}
+
+tasks.named('test', Test) {
+    useJUnitPlatform()
+}
+
+tasks.named('jar', Jar) {
+    manifest {
+        attributes 'Implementation-Title': 'ServerModUpdater',
+                'Implementation-Version': project.version,
+                'Implementation-Vendor': project.mod_author
+    }
+}
+
+tasks.named('processResources', ProcessResources) {
+    inputs.property 'mod_version', project.version
+    inputs.property 'mod_author', project.mod_author
+    filesMatching('META-INF/neoforge.mods.toml') {
+        expand mod_version: project.version, mod_author: project.mod_author
+    }
+}
+
+tasks.register('verifyReleaseJar') {
+    dependsOn tasks.named('jar')
+    doLast {
+        File artifact = tasks.named('jar', Jar).get().archiveFile.get().asFile
+        if (artifact.name != 'ServerModUpdater-1.2.0.jar') {
+            throw new GradleException("Unexpected artifact name: ${artifact.name}")
+        }
+        def tree = zipTree(artifact)
+        def descriptors = tree.matching { include 'META-INF/neoforge.mods.toml' }.files
+        if (descriptors.size() != 1) throw new GradleException('Missing canonical NeoForge descriptor')
+        if (!tree.matching { include 'META-INF/mods.toml' }.isEmpty()) {
+            throw new GradleException('Obsolete META-INF/mods.toml is packaged')
+        }
+        String descriptor = descriptors.first().getText('UTF-8')
+        ['modId="modupdates"', 'version="1.2.0"', 'displayName="ServerModUpdater"',
+         'authors="HardySofty"', 'modId="minecraft"', 'versionRange="[1.21.1]"',
+         'modId="neoforge"', 'versionRange="[21.1,)"', 'loaderVersion="[1,)"',
+         'side="SERVER"', 'displayURL="https://github.com/MihailDenisov/ServerModUpdater"',
+         'issueTrackerURL="https://github.com/MihailDenisov/ServerModUpdater/issues"'].each { required ->
+            if (!descriptor.contains(required)) throw new GradleException("Missing descriptor value: ${required}")
+        }
+        if (descriptor.contains('${')) throw new GradleException('Unexpanded placeholder in descriptor')
+        def nestedJars = tree.matching { include '**/*.jar' }.files
+        if (!nestedJars.isEmpty()) throw new GradleException('Unexpected bundled JAR(s): ' + nestedJars*.name)
+        def manifest = new java.util.jar.JarFile(artifact).withCloseable { it.manifest.mainAttributes }
+        if (manifest.getValue('Implementation-Version') != '1.2.0'
+                || manifest.getValue('Implementation-Vendor') != 'HardySofty') {
+            throw new GradleException('Manifest version/author mismatch')
+        }
+    }
+}
+
+tasks.named('build') { dependsOn tasks.named('verifyReleaseJar') }
+
+tasks.named('runServer') {
+    standardInput = System.in
+}
+
+tasks.named('wrapper', Wrapper) {
+    gradleVersion = '9.2.1'
+    distributionType = Wrapper.DistributionType.BIN
+}

@@ -56,4 +56,3 @@ Run `./gradlew build` (Windows: `.\gradlew.bat build`) with Java 21. The release
 Open an issue at [github.com/MihailDenisov/ServerModUpdater/issues](https://github.com/MihailDenisov/ServerModUpdater/issues) and include the Minecraft/NeoForge versions, sanitized logs, the command used, and the matching report. Never include API keys or signed download URLs.
 
 ServerModUpdater is released under the MIT License. See `LICENSE`.
-
