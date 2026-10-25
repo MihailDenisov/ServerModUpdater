@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.3.0
+
+- Added persistent, timestamped Markdown update plans with every choice unchecked by default.
+- Added plan list, preview, apply, status, and safe between-item cancellation commands.
+- Plan checkbox edits are validated against immutable JSON manifests; unknown, duplicate, malformed, tampered, stale, and conflicting choices fail closed.
+- Added per-application Markdown/JSON results, durable idempotence state, immediate provider candidate revalidation, and path-specific AutoModpack reminders.
+- Preserved existing direct update, bulk update, rollback, reports, localization, exact-hash matching, and `.jar.old` recovery behavior.
+
 ## 1.2.0
 
 - Renamed the public project and artifact to ServerModUpdater; set author metadata to HardySofty.

@@ -35,7 +35,7 @@ public final class ModScanner {
         Path gameDir = root.toAbsolutePath().normalize();
         List<Path> files = new ArrayList<>();
         Path mods = gameDir.resolve("mods");
-        if (Files.isDirectory(mods)) {
+        if (Files.isDirectory(mods, LinkOption.NOFOLLOW_LINKS) && !Files.isSymbolicLink(mods)) {
             try (DirectoryStream<Path> stream = Files.newDirectoryStream(mods, "*.jar")) {
                 for (Path path : stream) if (regularJar(path)) files.add(path);
             } catch (IOException e) {
@@ -66,7 +66,7 @@ public final class ModScanner {
 
     private static void collectHost(Path host, List<Path> found, Settings.Language language,
                                     Consumer<String> warnings) {
-        if (!Files.isDirectory(host)) return;
+        if (!Files.isDirectory(host, LinkOption.NOFOLLOW_LINKS) || Files.isSymbolicLink(host)) return;
         try (Stream<Path> paths = Files.walk(host)) {
             paths.filter(ModScanner::regularJar).filter(path -> {
                 Path relative = host.relativize(path);

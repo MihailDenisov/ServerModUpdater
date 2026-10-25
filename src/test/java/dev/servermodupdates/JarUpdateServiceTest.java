@@ -116,6 +116,26 @@ class JarUpdateServiceTest {
         assertTrue(Files.isRegularFile(original));
     }
 
+    @Test
+    void sourceChangedDuringDownloadIsNotReplacedOrBackedUp() throws Exception {
+        Path original = jar(root.resolve("mods/old.jar"), "old.txt", "old");
+        Path candidate = jar(root.resolve("candidate.jar"), "new.txt", "new");
+        UpdatePlan.Item item = item(original, candidate, "new.jar");
+        byte[] concurrentBytes = jar(root.resolve("concurrent.jar"), "changed.txt", "changed").toFile()
+                .exists() ? Files.readAllBytes(root.resolve("concurrent.jar")) : new byte[0];
+        JarUpdateService service = new JarUpdateService(root, (uri, destination, maximum) -> {
+            Files.copy(candidate, destination, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+            Files.write(original, concurrentBytes);
+            return Files.size(destination);
+        });
+
+        JarUpdateService.Result result = service.apply(item, Report.Provider.MODRINTH);
+        assertFalse(result.success());
+        assertArrayEquals(concurrentBytes, Files.readAllBytes(original));
+        assertFalse(Files.exists(root.resolve("mods/old.jar.old")));
+        assertFalse(Files.exists(root.resolve("mods/new.jar")));
+    }
+
     private UpdatePlan.Item item(Path original, Path candidate, String newName) throws Exception {
         ModScanner.Jar installed = ModScanner.scan(root, false, false, warning -> fail(warning)).getFirst();
         Report.Download download = new Report.Download(Report.Provider.MODRINTH, "p", "f", newName,

@@ -60,7 +60,7 @@ public record Settings(String curseforgeKey, boolean includeBeta, boolean includ
         }
         if (created || migrated) {
             try (OutputStream out = Files.newOutputStream(file)) {
-                props.store(out, "ServerModUpdater 1.2.0; keep CurseForge API keys private");
+                props.store(out, "ServerModUpdater 1.3.0; keep CurseForge API keys private");
             }
         }
         String env = trim(environment.apply("MODUPDATES_CURSEFORGE_API_KEY"));

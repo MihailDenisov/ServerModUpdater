@@ -1,4 +1,4 @@
-name: Release v1.2.0
+name: Release v1.3.0
 
 on:
   push:
@@ -23,7 +23,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: >-
-          gh release create v1.2.0 build/libs/ServerModUpdater-1.2.0.jar
+          gh release create v1.3.0 build/libs/ServerModUpdater-1.3.0.jar
           --target "$GITHUB_SHA"
-          --title "ServerModUpdater v1.2.0"
-          --notes "Server-only NeoForge 1.21.1 mod updater with optional AutoModpack integration, English/Russian localization, timestamped reports, verified downloads, .jar.old backups, and rollback."
+          --title "ServerModUpdater v1.3.0"
+          --notes "Server-only NeoForge 1.21.1 mod updater with selective Markdown plans, verified downloads, timestamped results, .jar.old backups, and rollback."

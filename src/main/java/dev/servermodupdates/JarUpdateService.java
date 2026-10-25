@@ -36,6 +36,7 @@ public final class JarUpdateService {
     }
 
     public record Result(String id, String path, boolean changed, boolean success, String message) { }
+    public record Recovery(boolean changed, boolean autoModpackChanged) { }
     private record Applied(Path original, Path installed, Path backup) { }
 
     private final Path gameDir;
@@ -62,10 +63,14 @@ public final class JarUpdateService {
     }
 
     public static boolean recoverPending(Path gameDir, boolean enableAutoModpack) {
+        return recoverPendingDetailed(gameDir, enableAutoModpack).changed();
+    }
+
+    public static Recovery recoverPendingDetailed(Path gameDir, boolean enableAutoModpack) {
         Path root = gameDir.toAbsolutePath().normalize();
         boolean changed = false;
-        List<Path> roots = new ArrayList<>();
-        roots.add(root.resolve("mods"));
+        boolean autoChanged = false;
+        List<Path> roots = new ArrayList<>(List.of(root.resolve("mods")));
         if (enableAutoModpack) {
             roots.add(root.resolve("automodpack/host-modpack"));
             roots.add(root.resolve("automodpack/host-midpack"));
@@ -77,7 +82,9 @@ public final class JarUpdateService {
                         && path.getFileName().toString().startsWith(".modupdates-")
                         && path.getFileName().toString().endsWith(".journal")).toList()) {
                     try {
-                        changed |= recover(journal, journal.getParent());
+                        boolean recovered = recover(journal, journal.getParent());
+                        changed |= recovered;
+                        autoChanged |= recovered && journal.startsWith(root.resolve("automodpack"));
                     } catch (IOException ignored) {
                         // Preserve an invalid journal for operator inspection; never follow its paths.
                     }
@@ -86,7 +93,7 @@ public final class JarUpdateService {
                 // A later explicit operation will report access errors for its exact target.
             }
         }
-        return changed;
+        return new Recovery(changed, autoChanged);
     }
 
     public synchronized Result apply(UpdatePlan.Item item, Report.Provider provider) {
@@ -96,13 +103,19 @@ public final class JarUpdateService {
         Path source = item.installed().absolute().toAbsolutePath().normalize();
         Path temporary = null;
         try {
-            validateSource(item, source);
             Path parent = source.getParent();
             validateContainedParent(parent);
             String newName = safeFileName(download.fileName());
             Path destination = parent.resolve(newName).normalize();
             Path backup = source.resolveSibling(source.getFileName() + ".old");
             if (!destination.getParent().equals(parent)) throw new IOException("имя файла выходит за пределы каталога");
+            if (alreadyApplied(item, download, source, destination, backup)) {
+                applied.put(item.id(), new Applied(source, destination, backup));
+                return new Result(item.id(), item.installed().relative(), false, true, Messages.text(settings,
+                        "Already installed and verified; no files changed.",
+                        "Уже установлено и проверено; файлы не изменены."));
+            }
+            validateSource(item, source);
             if (!destination.equals(source) && Files.exists(destination, LinkOption.NOFOLLOW_LINKS)) {
                 throw new IOException("целевой JAR уже существует: " + destination.getFileName());
             }
@@ -114,6 +127,8 @@ public final class JarUpdateService {
             if (bytes != download.size()) throw new IOException("размер загрузки не совпадает с метаданными");
             verifyHash(temporary, download.hashAlgorithm(), download.hash());
             verifyJar(temporary);
+            // Close the time-of-check/time-of-use window while the download was in progress.
+            validateSource(item, source);
 
             Path journal = parent.resolve(".modupdates-" + item.id() + ".journal");
             if (Files.exists(journal, LinkOption.NOFOLLOW_LINKS)) recover(journal, parent);
@@ -182,6 +197,17 @@ public final class JarUpdateService {
         }
     }
 
+    public synchronized boolean isAlreadyApplied(UpdatePlan.Item item, Report.Provider provider) throws IOException {
+        Report.Download download = item.provider(provider).orElse(null);
+        if (download == null) return false;
+        Path source = item.installed().absolute().toAbsolutePath().normalize();
+        validateContainedParent(source.getParent());
+        Path destination = source.getParent().resolve(safeFileName(download.fileName())).normalize();
+        if (!destination.getParent().equals(source.getParent())) return false;
+        return alreadyApplied(item, download, source, destination,
+                source.resolveSibling(source.getFileName() + ".old"));
+    }
+
     private Applied inferApplied(UpdatePlan.Item item) throws IOException {
         Path original = item.installed().absolute().toAbsolutePath().normalize();
         Path backup = original.resolveSibling(original.getFileName() + ".old");
@@ -201,6 +227,23 @@ public final class JarUpdateService {
         if (!currentSha1.equalsIgnoreCase(item.installed().sha1())) {
             throw new IOException("исходный JAR изменился после проверки; выполните /modupdates check снова");
         }
+    }
+
+    private boolean alreadyApplied(UpdatePlan.Item item, Report.Download download, Path source,
+                                   Path destination, Path backup) throws IOException {
+        if (!Files.isRegularFile(backup, LinkOption.NOFOLLOW_LINKS)
+                || Files.isSymbolicLink(backup) || !Files.isRegularFile(destination, LinkOption.NOFOLLOW_LINKS)
+                || Files.isSymbolicLink(destination)) return false;
+        if (!digest(backup, "SHA-1").equalsIgnoreCase(item.installed().sha1())) return false;
+        String algorithm = switch (download.hashAlgorithm()) {
+            case "sha1" -> "SHA-1";
+            case "sha256" -> "SHA-256";
+            case "sha512" -> "SHA-512";
+            default -> throw new IOException("неподдерживаемый или отсутствующий checksum");
+        };
+        if (!digest(destination, algorithm).equalsIgnoreCase(download.hash())) return false;
+        verifyJar(destination);
+        return true;
     }
 
     private void validateContainedParent(Path parent) throws IOException {
@@ -381,7 +424,7 @@ public final class JarUpdateService {
                 requireSafeHttps(current);
                 HttpRequest request = HttpRequest.newBuilder(current).timeout(timeout)
                         .header("Accept", "application/java-archive, application/octet-stream")
-                        .header("User-Agent", "ServerModUpdater/1.2.0").GET().build();
+                        .header("User-Agent", "ServerModUpdater/1.3.0").GET().build();
                 HttpResponse<InputStream> response = client.send(request, HttpResponse.BodyHandlers.ofInputStream());
                 int status = response.statusCode();
                 if (status >= 300 && status < 400) {

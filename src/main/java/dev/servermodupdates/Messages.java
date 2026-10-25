@@ -8,7 +8,11 @@ final class Messages {
     }
 
     static String restart(Settings settings) {
-        if (settings.enableAutoModpack()) {
+        return restart(settings, settings.enableAutoModpack());
+    }
+
+    static String restart(Settings settings, boolean autoModpackChanged) {
+        if (autoModpackChanged) {
             return text(settings,
                     "Mod files changed. Run /amp generate to regenerate the AutoModpack modpack, then restart the server.",
                     "Файлы модов изменены. Выполните /amp generate для пересборки AutoModpack, затем перезапустите сервер.");

@@ -7,7 +7,7 @@
 5. Откройте `CODEX_PROMPT.txt`, скопируйте в чат Codex его текст и отправьте. Codex прочитает `AGENTS.md` и `CODEX_TASK.md` из проекта.
 6. Политика субагентов задаётся `AGENTS.md`; **реальные конфигурации** — `.codex/config.toml` (макс. 2 одновременных субагента) и `.codex/agents/*.toml` (2 узкие роли, только чтение). Эти параметры применятся, если используемая версия Codex поддерживает project-scoped configuration. Перезапустите чат, если изменили агентские конфиги.
 7. Воспользуйтесь **Terminal → Run Task → Gradle: test** и **Gradle: build JAR** либо терминалом `./gradlew --no-daemon test` / `./gradlew --no-daemon build` (Windows: `.\gradlew.bat`). В проекте уже находится настоящий Gradle Wrapper 9.2.1; отдельная установка Gradle не нужна.
-8. После успешной сборки JAR находится в `build/libs/ServerModUpdater-1.2.0.jar`; ставьте его только на NeoForge-сервер 1.21.1. Не ставьте исходный ZIP в `mods/`. Команда `/modupdates check` доступна консоли и OP 2+; отчёты: `modupdates/reports/report-<UTC timestamp>-<suffix>.md/.json`.
+8. После успешной сборки JAR находится в `build/libs/ServerModUpdater-1.3.0.jar`; ставьте его только на NeoForge-сервер 1.21.1. Не ставьте исходный ZIP в `mods/`. Команда `/modupdates check` доступна консоли и OP 2+; отчёты: `modupdates/reports/report-<UTC timestamp>-<suffix>.md/.json`.
 
 ## Какие расширения нужны, а какие нет
 

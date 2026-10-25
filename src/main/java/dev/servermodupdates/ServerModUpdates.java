@@ -45,14 +45,20 @@ public final class ServerModUpdates {
     private volatile String operation = "IDLE";
     private volatile List<JarUpdateService.Result> updateResults = List.of();
     private volatile boolean reminderOutstanding;
+    private volatile boolean reminderAutoModpackOutstanding;
+    private final AtomicBoolean planCancelRequested = new AtomicBoolean();
+    private volatile List<PlanExecutor.Action> planActions = List.of();
+    private volatile Path lastPlanResult;
 
     public ServerModUpdates(IEventBus modBus) {
         NeoForge.EVENT_BUS.addListener(this::onCommands);
         NeoForge.EVENT_BUS.addListener(this::onServerStopping);
         Settings settings = initializeSettings();
-        if (JarUpdateService.recoverPending(gameDir(), settings.enableAutoModpack())) {
+        JarUpdateService.Recovery recovery = JarUpdateService.recoverPendingDetailed(gameDir(), settings.enableAutoModpack());
+        if (recovery.changed()) {
             reminderOutstanding = true;
-            LOGGER.warn(Messages.restart(settings));
+            reminderAutoModpackOutstanding = recovery.autoModpackChanged();
+            LOGGER.warn(Messages.restart(settings, recovery.autoModpackChanged()));
         }
     }
 
@@ -87,6 +93,24 @@ public final class ServerModUpdates {
                 .executes(context -> rollback(context.getSource(), StringArgumentType.getString(context, "id")))));
         root.then(Commands.literal("diagnose").then(Commands.literal("curseforge")
                 .executes(context -> diagnoseCurseForge(context.getSource()))));
+        var plan = Commands.literal("plan");
+        plan.then(Commands.literal("list")
+                .executes(context -> planList(context.getSource(), 1))
+                .then(Commands.argument("page", IntegerArgumentType.integer(1))
+                        .executes(context -> planList(context.getSource(), IntegerArgumentType.getInteger(context, "page")))));
+        plan.then(Commands.literal("preview")
+                .executes(context -> planPreview(context.getSource(), null))
+                .then(Commands.argument("planId", StringArgumentType.word())
+                        .suggests((context, builder) -> SharedSuggestionProvider.suggest(markdownPlanIds(), builder))
+                        .executes(context -> planPreview(context.getSource(), StringArgumentType.getString(context, "planId")))));
+        plan.then(Commands.literal("apply")
+                .executes(context -> planApply(context.getSource(), null))
+                .then(Commands.argument("planId", StringArgumentType.word())
+                        .suggests((context, builder) -> SharedSuggestionProvider.suggest(markdownPlanIds(), builder))
+                        .executes(context -> planApply(context.getSource(), StringArgumentType.getString(context, "planId")))));
+        plan.then(Commands.literal("status").executes(context -> planStatus(context.getSource())));
+        plan.then(Commands.literal("cancel").executes(context -> planCancel(context.getSource())));
+        root.then(plan);
         root.then(Commands.literal("configpath").executes(context -> configPath(context.getSource())));
         root.then(Commands.literal("help").executes(context -> help(context.getSource())));
         event.getDispatcher().register(root);
@@ -107,6 +131,7 @@ public final class ServerModUpdates {
                     LOGGER.warn("Unsupported modupdates language value; falling back to en_us");
                 }
                 ReportWriter.Written written = ReportWriter.write(gameDir, report, settings);
+                MarkdownPlanRepository.Written plan = new MarkdownPlanRepository(gameDir).create(report, written, settings);
                 lastReport = report;
                 currentPlan = UpdatePlan.from(report);
                 operation = "CHECK_COMPLETED";
@@ -115,7 +140,8 @@ public final class ServerModUpdates {
                         + Messages.text(settings, ", unmatched/unverified ", ", неопознано/не проверено ")
                         + report.unmatchedCount() + ". Modrinth: " + report.providerSummary(Report.Provider.MODRINTH, settings.language())
                         + "; CurseForge: " + report.providerSummary(Report.Provider.CURSEFORGE, settings.language())
-                        + "; report=" + written.markdown().getFileName() + ".");
+                        + "; report=" + written.markdown().getFileName() + "; plan="
+                        + plan.markdown().getFileName() + "; planId=" + plan.planId() + ".");
             } catch (Exception e) {
                 operation = "CHECK_FAILED: " + e.getClass().getSimpleName();
                 LOGGER.error("ModUpdates scan failed", e);
@@ -240,8 +266,11 @@ public final class ServerModUpdates {
                 updateResults = List.copyOf(results);
                 boolean changed = results.stream().anyMatch(JarUpdateService.Result::changed);
                 reminderOutstanding |= changed;
+                reminderAutoModpackOutstanding |= results.stream().anyMatch(result -> result.changed()
+                        && isAutoModpackPath(result.path()));
                 operation = results.stream().allMatch(JarUpdateService.Result::success) ? "UPDATE_COMPLETED" : "UPDATE_PARTIAL_OR_FAILED";
-                if (changed) reminder(source, settings);
+                if (changed) reminder(source, settings, results.stream().anyMatch(result -> result.changed()
+                        && isAutoModpackPath(result.path())));
             } catch (Exception e) {
                 operation = "UPDATE_FAILED: " + e.getClass().getSimpleName();
                 LOGGER.error("ModUpdates update job failed", e);
@@ -270,7 +299,8 @@ public final class ServerModUpdates {
                 send(source, "[ModUpdates] " + result.id() + ": " + (result.success() ? "OK: " : "FAIL: ") + result.message());
                 if (result.changed()) {
                     reminderOutstanding = true;
-                    reminder(source, settings);
+                    reminderAutoModpackOutstanding |= isAutoModpackPath(result.path());
+                    reminder(source, settings, isAutoModpackPath(result.path()));
                 }
             } catch (Exception e) {
                 operation = "ROLLBACK_FAILED: " + e.getClass().getSimpleName();
@@ -290,7 +320,8 @@ public final class ServerModUpdates {
                 + "; restartReminder=" + reminderOutstanding), false);
         for (JarUpdateService.Result result : updateResults) source.sendSuccess(() -> Component.literal(result.id()
                 + " | " + result.path() + " | " + (result.success() ? "OK" : "FAIL") + " | " + result.message()), false);
-        if (reminderOutstanding) source.sendSuccess(() -> Component.literal(Messages.restart(settings)), false);
+        if (reminderOutstanding) source.sendSuccess(() -> Component.literal(
+                Messages.restart(settings, reminderAutoModpackOutstanding)), false);
         return Command.SINGLE_SUCCESS;
     }
 
@@ -311,6 +342,134 @@ public final class ServerModUpdates {
             }
         });
         return Command.SINGLE_SUCCESS;
+    }
+
+    private int planList(CommandSourceStack source, int page) {
+        Settings settings = settings();
+        try {
+            List<MarkdownPlanRepository.Summary> plans = new MarkdownPlanRepository(gameDir()).list();
+            int pages = Math.max(1, (plans.size() + PAGE_SIZE - 1) / PAGE_SIZE);
+            if (page > pages) {
+                source.sendFailure(Component.literal("[ModUpdates] " + Messages.text(settings,
+                        "Page is outside range 1..", "Страница вне диапазона 1..") + pages));
+                return 0;
+            }
+            source.sendSuccess(() -> Component.literal("[ModUpdates] Plans page " + page + "/" + pages), false);
+            int from = (page - 1) * PAGE_SIZE;
+            for (MarkdownPlanRepository.Summary plan : plans.subList(from, Math.min(plans.size(), from + PAGE_SIZE))) {
+                source.sendSuccess(() -> Component.literal(plan.planId() + " | selected=" + plan.selected()
+                        + "/" + plan.total() + " | " + (plan.valid() ? "VALID" : "INVALID")), false);
+            }
+            return Command.SINGLE_SUCCESS;
+        } catch (IOException e) {
+            source.sendFailure(Component.literal("[ModUpdates] " + Messages.text(settings,
+                    "Cannot list plans: ", "Невозможно показать планы: ") + e.getClass().getSimpleName()));
+            return 0;
+        }
+    }
+
+    private int planPreview(CommandSourceStack source, String requestedId) {
+        String planId;
+        try { planId = resolvePlanId(requestedId); }
+        catch (IOException e) { return planFailure(source, e.getMessage()); }
+        if (!begin(source, "PLAN_PREVIEW " + planId)) return 0;
+        planCancelRequested.set(false);
+        currentTask = worker.submit(() -> {
+            try {
+                PlanExecutor.Preview preview = new PlanExecutor(gameDir(), settings(),
+                        new MarkdownPlanRepository(gameDir())).preview(planId, planCancelRequested::get);
+                planActions = preview.actions();
+                operation = preview.valid() ? "PLAN_PREVIEW_COMPLETED" : "PLAN_PREVIEW_INVALID";
+                send(source, "[ModUpdates] plan=" + planId + "; selected=" + preview.selected()
+                        + "; skipped=" + preview.skipped() + "; valid=" + preview.valid());
+                for (PlanExecutor.Action action : preview.actions()) {
+                    send(source, action.choiceId() + " | " + action.path() + " | " + action.provider().name().toLowerCase(Locale.ROOT)
+                            + " | target=" + action.destinationPath() + " | " + action.status() + " | " + action.message());
+                }
+            } catch (Exception e) {
+                if (e instanceof InterruptedException) Thread.currentThread().interrupt();
+                operation = "PLAN_PREVIEW_FAILED";
+                fail(source, "[ModUpdates] " + Messages.text(settings(), "Plan preview failed: ", "Ошибка preview плана: ")
+                        + safePlanError(e));
+            } finally { running.set(false); currentTask = null; }
+        });
+        return Command.SINGLE_SUCCESS;
+    }
+
+    private int planApply(CommandSourceStack source, String requestedId) {
+        String planId;
+        try { planId = resolvePlanId(requestedId); }
+        catch (IOException e) { return planFailure(source, e.getMessage()); }
+        if (!begin(source, "PLAN_APPLY " + planId)) return 0;
+        planCancelRequested.set(false);
+        source.sendSuccess(() -> Component.literal("[ModUpdates] " + Messages.text(settings(),
+                "Plan apply started; only checked and validated entries can change.",
+                "Применение плана начато; изменяться могут только отмеченные и проверенные записи.")), false);
+        currentTask = worker.submit(() -> {
+            try {
+                Settings settings = settings();
+                PlanExecutor.Execution execution = new PlanExecutor(gameDir(), settings,
+                        new MarkdownPlanRepository(gameDir())).apply(planId, planCancelRequested::get);
+                PlanResultWriter.Written written = PlanResultWriter.write(gameDir(), execution, settings);
+                planActions = execution.actions();
+                lastPlanResult = written.markdown();
+                reminderOutstanding |= execution.restartRequired();
+                reminderAutoModpackOutstanding |= execution.autoModpackChanged();
+                boolean failed = execution.actions().stream().anyMatch(action -> switch (action.status()) {
+                    case STALE, INVALID, UNAVAILABLE, CONFLICT, STATE_ERROR, FAILED -> true;
+                    default -> false;
+                });
+                operation = planCancelRequested.get() ? "PLAN_CANCELLED"
+                        : failed ? "PLAN_PARTIAL_OR_FAILED" : "PLAN_COMPLETED";
+                long installed = execution.actions().stream().filter(action -> action.status() == PlanExecutor.Status.INSTALLED).count();
+                send(source, "[ModUpdates] plan=" + planId + "; installed=" + installed + "; result="
+                        + written.markdown().toAbsolutePath().normalize());
+                if (execution.restartRequired()) reminder(source, settings, execution.autoModpackChanged());
+            } catch (Exception e) {
+                if (e instanceof InterruptedException) Thread.currentThread().interrupt();
+                operation = "PLAN_APPLY_FAILED";
+                fail(source, "[ModUpdates] " + Messages.text(settings(), "Plan apply failed: ", "Ошибка применения плана: ")
+                        + safePlanError(e));
+            } finally { running.set(false); currentTask = null; }
+        });
+        return Command.SINGLE_SUCCESS;
+    }
+
+    private int planStatus(CommandSourceStack source) {
+        source.sendSuccess(() -> Component.literal("[ModUpdates] operation=" + operation + "; active=" + running.get()
+                + "; cancelRequested=" + planCancelRequested.get() + "; result="
+                + (lastPlanResult == null ? "none" : lastPlanResult.toAbsolutePath().normalize())), false);
+        for (PlanExecutor.Action action : planActions) {
+            source.sendSuccess(() -> Component.literal(action.choiceId() + " | " + action.path() + " | "
+                    + action.status() + " | " + action.message()), false);
+        }
+        return Command.SINGLE_SUCCESS;
+    }
+
+    private int planCancel(CommandSourceStack source) {
+        Settings settings = settings();
+        if (!running.get() || !operation.startsWith("PLAN_")) {
+            source.sendFailure(Component.literal("[ModUpdates] " + Messages.text(settings,
+                    "No plan operation is active.", "Операция плана не выполняется.")));
+            return 0;
+        }
+        planCancelRequested.set(true);
+        source.sendSuccess(() -> Component.literal("[ModUpdates] " + Messages.text(settings,
+                "Cancellation requested; it will stop before the next file operation.",
+                "Отмена запрошена; выполнение остановится перед следующей файловой операцией.")), false);
+        return Command.SINGLE_SUCCESS;
+    }
+
+    private String resolvePlanId(String requested) throws IOException {
+        if (requested != null) return new MarkdownPlanRepository(gameDir()).parse(requested).manifest().planId();
+        return new MarkdownPlanRepository(gameDir()).list().stream().filter(MarkdownPlanRepository.Summary::valid)
+                .map(MarkdownPlanRepository.Summary::planId).findFirst()
+                .orElseThrow(() -> new IOException("no valid plan; run /modupdates check"));
+    }
+
+    private int planFailure(CommandSourceStack source, String message) {
+        source.sendFailure(Component.literal("[ModUpdates] " + message));
+        return 0;
     }
 
     private static int configPath(CommandSourceStack source) {
@@ -336,6 +495,8 @@ public final class ServerModUpdates {
                 "/modupdates check | status | list [page] | configpath | help",
                 "/modupdates update list [page] | update <id> <modrinth|curseforge> | update status",
                 "/modupdates update all dryrun | update all confirm <token> | rollback <id>",
+                "/modupdates plan list [page] | plan preview [planId] | plan apply [planId]",
+                "/modupdates plan status | plan cancel",
                 Messages.text(settings,
                         "/modupdates diagnose curseforge — all commands require OP level 2+; console is supported",
                         "/modupdates diagnose curseforge — все команды требуют OP level 2+; console поддерживается"))) {
@@ -403,10 +564,24 @@ public final class ServerModUpdates {
     private static void fail(CommandSourceStack source, String message) {
         source.getServer().execute(() -> source.sendFailure(Component.literal(message)));
     }
-    private static void reminder(CommandSourceStack source, Settings settings) {
-        String reminder = Messages.restart(settings);
+    private static void reminder(CommandSourceStack source, Settings settings, boolean autoModpackChanged) {
+        String reminder = Messages.restart(settings, autoModpackChanged);
         LOGGER.warn(reminder);
         send(source, reminder);
+    }
+    private String[] markdownPlanIds() {
+        try { return new MarkdownPlanRepository(gameDir()).list().stream()
+                .map(MarkdownPlanRepository.Summary::planId).toArray(String[]::new); }
+        catch (IOException e) { return new String[0]; }
+    }
+    private static boolean isAutoModpackPath(String path) {
+        return path != null && path.replace('\\', '/').startsWith("automodpack/");
+    }
+    private static String safePlanError(Exception error) {
+        String message = error.getMessage();
+        if (message == null || message.isBlank()) return error.getClass().getSimpleName();
+        return message.replaceAll("(?i)https://\\S+", "<redacted-url>")
+                .replaceAll("(?i)(api[_-]?key|token|signature)=[^\\s&]+", "$1=<redacted>");
     }
     private static Path gameDir() { return FMLPaths.GAMEDIR.get().toAbsolutePath().normalize(); }
     private record Selection(UpdatePlan.Item item, Report.Provider provider) { }

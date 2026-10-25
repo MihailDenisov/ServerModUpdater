@@ -10,7 +10,7 @@ displayName="ServerModUpdater"
 authors="${mod_author}"
 displayURL="https://github.com/MihailDenisov/ServerModUpdater"
 description='''
-Server-only manual update audit and verified JAR replacement for Modrinth and CurseForge.
+Server-only manual update audit and selective Markdown update plans for Modrinth and CurseForge.
 Updates require an operator command and take effect only after a full server restart.
 Optional AutoModpack integration is disabled by default.
 '''

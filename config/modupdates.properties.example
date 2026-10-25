@@ -1,4 +1,4 @@
-# ServerModUpdater 1.2.0 example. Copy to config/modupdates.properties.
+# ServerModUpdater 1.3.0 example. Copy to config/modupdates.properties.
 # Prefer MODUPDATES_CURSEFORGE_API_KEY instead of storing a key here.
 curseforgeApiKey=YOUR_CURSEFORGE_API_KEY
 includeBeta=false

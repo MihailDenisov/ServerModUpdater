@@ -71,6 +71,19 @@ class FingerprintScannerTest {
         }
     }
 
+    @Test
+    void ignoresSymlinkedStandardModsRootWhenSupported() throws Exception {
+        Path actual = root.resolve("actual-mods");
+        write(actual.resolve("outside.jar"), "outside");
+        try {
+            Files.createSymbolicLink(root.resolve("mods"), actual);
+            assertEquals(0, ModScanner.scan(root, false, false, false, Settings.Language.EN_US,
+                    warning -> { }).size());
+        } catch (UnsupportedOperationException | java.io.IOException ignored) {
+            // Symlink creation commonly requires elevated Windows privileges.
+        }
+    }
+
     private void assertFingerprint(String contents, long expected) throws Exception {
         Path file = Files.createTempFile(root, "fingerprint", ".jar");
         Files.writeString(file, contents, StandardCharsets.UTF_8);

@@ -366,7 +366,7 @@ public final class UpdateChecker {
                 HttpRequest.Builder request = HttpRequest.newBuilder(uri)
                     .timeout(Duration.ofMillis(timeoutMillis))
                     .header("Accept", "application/json")
-                    .header("User-Agent", "ServerModUpdater/1.2.0 (NeoForge 1.21.1; manual updates)");
+                    .header("User-Agent", "ServerModUpdater/1.3.0 (NeoForge 1.21.1; manual updates)");
             if (!curseKey.isBlank()) request.header("x-api-key", curseKey);
             if ("POST".equals(method)) {
                 request.header("Content-Type", "application/json")
